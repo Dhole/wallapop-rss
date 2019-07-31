@@ -5,7 +5,7 @@ import requests
 import toml
 from flask import Flask
 from datetime import datetime
-from PyRSS2Gen import RSS2, RSSItem, Guid
+from PyRSS2Gen import RSS2, RSSItem, Guid, Enclosure
 
 USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64; rv:67.0) Gecko/20100101 Firefox/67.0'
 URL = 'https://es.wallapop.com'
@@ -51,10 +51,18 @@ def rss_view(id):
 
             date = datetime.utcfromtimestamp(item['publishDate']//1000)
             # print(f"{date.strftime('%Y-%m-%d %H:%M:%S')} - {item['price']} - {item['title']}")
+            description = item['description'] + '<br/>'
+            for image in item['images']:
+                description += f'<img src="{image["mediumURL"]}"><br/>'
+            # description = f'<![CDATA[\n{description}\n]>'
+            mainImage = item['mainImage']
+            enclosure = Enclosure(url=mainImage['mediumURL'], length=0,
+                    type=f"image/jpeg")
             rss_items.append(RSSItem(
                     title=f"{item['title']} - {item['salePrice']}{item['currency']['symbol']}",
                     link=f"https://es.wallapop.com/item/{item['url']}",
-                    description=item['description'],
+                    description=description,
+                    enclosure=enclosure,
                     author=item['sellerUser']['microName'],
                     guid=Guid(str(item_id)),
                     pubDate=date
@@ -74,7 +82,7 @@ def rss_view(id):
         lastBuildDate=lastBuildDate,
         items=rss_items
     )
-    return feed.to_xml(), 200, {'Content-Type': 'text/xml; charset=utf-8'}
+    return feed.to_xml('utf-8'), 200, {'Content-Type': 'text/xml; charset=utf-8'}
 
 if __name__ == "__main__":
     port = 8080
