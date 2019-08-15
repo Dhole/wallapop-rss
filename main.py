@@ -1,20 +1,25 @@
 #!/usr/bin/env python3
 
+import re
 import sys
 import requests
 import toml
 from flask import Flask
 from datetime import datetime
-from PyRSS2Gen import RSS2, RSSItem, Guid, Enclosure
+from PyRSS2Gen import RSS2, RSSItem, Guid
+from signature import get_timestamp, get_signature
 
 USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64; rv:67.0) Gecko/20100101 Firefox/67.0'
 URL = 'https://es.wallapop.com'
+URLAPIV3 = 'https://api.wallapop.com/api/v3'
 
 app = Flask(__name__)
 queries = {}
 
 def get(url, params, cookies = {}):
-    headers = {'User-Agent': USER_AGENT}
+    timestamp = get_timestamp()
+    signature = get_signature(url, 'get', timestamp)
+    headers = {'User-Agent': USER_AGENT, 'Timestamp': timestamp, 'X-Signature': signature}
     r = requests.get(url, params=params, headers=headers, cookies=cookies)
     return r.json()
 
@@ -22,10 +27,31 @@ def get_location(place_id):
     return get(f'{URL}/maps/here/place', {'placeId': place_id})
 
 def search(keywords, location, location_radius, min_price, max_price):
-    return get(f'{URL}/rest/items',
-            {'dist': str(location_radius), 'kws': keywords, 'filters_source': 'quick_filters', 'order': 'creationDate-des',
-                'minPrice': min_price, 'maxPrice': max_price},
-            {'searchLat': str(location['latitude']), 'searchLng': str(location['longitude'])})
+    return get(f'{URLAPIV3}/general/search',
+            {
+                'distance': str(location_radius*1000),
+                'keywords': keywords,
+                'filters_source': 'quick_filters',
+                'order_by': 'newest',
+                'min_sale_price': min_price,
+                'max_sale_price': max_price,
+                'latitude': str(location['latitude']),
+                'longitude': str(location['longitude']),
+                'language': 'es_ES'
+            })
+
+def get_date(item_id):
+    item = get(f'{URLAPIV3}/items/{item_id}', {})
+    # print(item)
+    # print('>>>', item_id)
+    date = item['content']['modified_date']
+    return datetime.utcfromtimestamp(date//1000)
+    # url = f"{URL}/item/{item['web_slug']}"
+    # res = requests.get(url).text
+    # match = re.search('(<div class=\"card-product-detail-user-stats-published\">)([^<]*)(</div>)',
+    #         res)
+    # date_str = match.group(2)
+    # print(date_str)
 
 # Heavily inspired by https://github.com/tanrax/wallaviso/blob/master/app.py
 @app.route('/rss/<string:id>')
@@ -44,26 +70,21 @@ def rss_view(id):
     for keyword in keywords:
         result = search(keywords, location, location_radius, min_price, max_price)
 
-        for item in result['items']:
-            item_id = item['itemId']
+        for item in result['search_objects']:
+            item_id = item['id']
             if item_id in item_ids:
                 continue
 
-            date = datetime.utcfromtimestamp(item['publishDate']//1000)
+            date = get_date(item_id)
             # print(f"{date.strftime('%Y-%m-%d %H:%M:%S')} - {item['price']} - {item['title']}")
             description = item['description'] + '<br/>'
             for image in item['images']:
-                description += f'<img src="{image["mediumURL"]}"><br/>'
-            # description = f'<![CDATA[\n{description}\n]>'
-            mainImage = item['mainImage']
-            enclosure = Enclosure(url=mainImage['mediumURL'], length=0,
-                    type=f"image/jpeg")
+                description += f'<img src="{image["medium"]}"><br/>'
             rss_items.append(RSSItem(
-                    title=f"{item['title']} - {item['salePrice']}{item['currency']['symbol']}",
-                    link=f"https://es.wallapop.com/item/{item['url']}",
+                    title=f"{item['title']} - {item['price']} {item['currency']}",
+                    link=f"https://es.wallapop.com/item/{item['web_slug']}",
                     description=description,
-                    enclosure=enclosure,
-                    author=item['sellerUser']['microName'],
+                    author=item['user']['micro_name'],
                     guid=Guid(str(item_id)),
                     pubDate=date
                     )
