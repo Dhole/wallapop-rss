@@ -4,17 +4,49 @@ import re
 import sys
 import requests
 import toml
+import time
 from flask import Flask
 from datetime import datetime
 from PyRSS2Gen import RSS2, RSSItem, Guid
+from threading import RLock
+
 from signature import get_timestamp, get_signature
 
 USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64; rv:67.0) Gecko/20100101 Firefox/67.0'
 URL = 'https://es.wallapop.com'
 URLAPIV3 = 'https://api.wallapop.com/api/v3'
 
-app = Flask(__name__)
-queries = {}
+class Cache:
+    def __init__(self, updater, expiration):
+        self.updater = updater
+        self.expiration = expiration
+        self.dict = {}
+        self.lock = RLock()
+
+    def clean(self):
+        self.lock.acquire()
+        max_timestamp = int(time.time()) - self.expiration
+        try:
+            for key in [k for k, v in self.dict.items() if v[1] < max_timestamp]:
+                # print('# Cleaning', key, 'from cache')
+                del self.dict[key]
+        finally:
+            self.lock.release()
+
+    def get(self, key):
+        self.clean()
+        self.lock.acquire()
+        value = None
+        try:
+            if key not in self.dict:
+                _value = self.updater(key)
+                timestamp = int(time.time())
+                # print('# Adding', key, 'to cache')
+                self.dict[key] = (_value, timestamp)
+            value = self.dict[key]
+        finally:
+            self.lock.release()
+        return value[0]
 
 def get(url, params, cookies = {}):
     timestamp = get_timestamp()
@@ -53,6 +85,10 @@ def get_date(item_id):
     # date_str = match.group(2)
     # print(date_str)
 
+app = Flask(__name__)
+queries = {}
+item_date_cache = Cache(get_date, 12 * 3600)
+
 # Heavily inspired by https://github.com/tanrax/wallaviso/blob/master/app.py
 @app.route('/rss/<string:id>')
 def rss_view(id):
@@ -75,7 +111,8 @@ def rss_view(id):
             if item_id in item_ids:
                 continue
 
-            date = get_date(item_id)
+            # date = get_date(item_id)
+            date = item_date_cache.get(item_id)
             # print(f"{date.strftime('%Y-%m-%d %H:%M:%S')} - {item['price']} - {item['title']}")
             description = item['description'] + '<br/>'
             for image in item['images']:
@@ -112,4 +149,4 @@ if __name__ == "__main__":
     with open('queries.toml') as file:
         data = file.read()
         queries = toml.loads(data)
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, threaded=True)
