@@ -5,6 +5,7 @@ import sys
 import requests
 import toml
 import time
+import signal
 from flask import Flask
 from datetime import datetime
 from PyRSS2Gen import RSS2, RSSItem, Guid
@@ -92,8 +93,10 @@ item_date_cache = Cache(get_date, 12 * 3600)
 # Heavily inspired by https://github.com/tanrax/wallaviso/blob/master/app.py
 @app.route('/rss/<string:id>')
 def rss_view(id):
+    global item_data_cache
     query = queries[id]
     keywords = query['keywords']
+    ignores = query['ignores']
     location_name = query['location_name']
     location_radius = query['location_radius']
     min_price = query['min_price']
@@ -109,6 +112,14 @@ def rss_view(id):
         for item in result['search_objects']:
             item_id = item['id']
             if item_id in item_ids:
+                continue
+
+            ignore_item = False
+            for ignore in ignores:
+                if ignore.lower() in item['description'].lower():
+                    ignore_item = True
+                    break
+            if ignore_item:
                 continue
 
             # date = get_date(item_id)
@@ -142,11 +153,20 @@ def rss_view(id):
     )
     return feed.to_xml('utf-8'), 200, {'Content-Type': 'text/xml; charset=utf-8'}
 
+def handler_sigusr1(sig, frame):
+    load_queries()
+
+def load_queries():
+    global queries
+    print(' > Loading queries.toml')
+    with open('queries.toml') as file:
+        data = file.read()
+        queries = toml.loads(data)
+
 if __name__ == "__main__":
     port = 8080
     if len(sys.argv) > 1:
         port = int(sys.argv[1])
-    with open('queries.toml') as file:
-        data = file.read()
-        queries = toml.loads(data)
+    load_queries()
+    signal.signal(signal.SIGUSR1, handler_sigusr1)
     app.run(host="0.0.0.0", port=port, threaded=True)
