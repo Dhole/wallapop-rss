@@ -1,0 +1,7 @@
+[iphone]
+keywords = ["iphone 7", "iphone 6S"]
+ignores = ["ipad"]
+location_name = "Barcelona"
+location_radius = 5
+min_price = 0
+max_price = 200
