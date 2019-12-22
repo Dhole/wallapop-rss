@@ -29,3 +29,6 @@ location_radius = 5 # Radius in Km from the location
 min_price = 0 # Minimum price in EUR
 max_price = 200 # Maximum price in EUR
 ```
+# License
+
+The code is released under the 3-clause BSD License.

@@ -1,0 +1,27 @@
+[nintendodsixl]
+keywords = ["nintendo dsi xl"]
+location_name = "Barcelona"
+location_radius = 5
+min_price = 0
+max_price = 999
+
+[nintendo3ds]
+keywords = ["nintendo 3ds"]
+location_name = "Barcelona"
+location_radius = 5
+min_price = 0
+max_price = 999
+
+[kindle]
+keywords = ["kindle"]
+location_name = "Barcelona"
+location_radius = 5
+min_price = 0
+max_price = 999
+
+[psvita]
+keywords = ["ps vita", "psvita"]
+location_name = "Barcelona"
+location_radius = 5
+min_price = 0
+max_price = 999
