@@ -10,6 +10,7 @@ Wallapop RSS query feed
 # Usage
 
 The default listening port is 8080, but it can be changed with the first argument.
+The configuration file must be named `queries.toml` and be in the path where the main program is executed.
 
 ```
 ./main.py [PORT]
