@@ -5,23 +5,27 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/gin-gonic/gin"
 	"github.com/google/go-querystring/query"
+	"github.com/gorilla/feeds"
 	log "github.com/sirupsen/logrus"
 )
 
 const (
-	USER_AGENT           = "Mozilla/5.0 (X11; Linux x86_64; rv:67.0) Gecko/20100101 Firefox/67.0"
-	URL                  = "https://es.wallapop.com"
-	URLAPIV3             = "https://api.wallapop.com/api/v3"
-	DEFAULT_QUERIES_PATH = "./queries.toml"
+	USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:67.0) Gecko/20100101 Firefox/67.0"
+	URL        = "https://es.wallapop.com"
+	URLAPIV3   = "https://api.wallapop.com/api/v3"
 )
 
 type Query struct {
@@ -94,8 +98,10 @@ func (c *Cache) Get(key string) (interface{}, error) {
 	entry, ok := c.entries[key]
 	c.m.RUnlock()
 	if ok {
+		log.WithField("key", key).Debug("Cache hit")
 		return entry.Value, nil
 	}
+	log.WithField("key", key).Debug("Cache miss")
 	value, err := c.fetchFn(key)
 	if err != nil {
 		return nil, err
@@ -152,28 +158,31 @@ func get(url string, params interface{}, res interface{}) error {
 	req.Header.Set("X-Signature", signature)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		log.WithField("url", resp.Request.URL).Error("Failed http request")
 		return fmt.Errorf("doing http request: %w", err)
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("reading http response body: %w", err)
 	}
+	log.WithField("url", resp.Request.URL).Debug("HTTP GET")
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.WithField("url", resp.Request.URL).WithField("body", string(body)).Error("bad http request")
+		log.WithField("url", resp.Request.URL).WithField("body", string(body)).Error("Bad http request")
 		return fmt.Errorf("http status code is %v", resp.StatusCode)
 	}
-	log.Debug(resp.Request.URL)
-	fmt.Println("###")
-	fmt.Print(string(body))
-	fmt.Println("###")
+	// log.Debug(resp.Request.URL)
+	// fmt.Println("###")
+	// fmt.Print(string(body))
+	// fmt.Println("\n###")
 	if err := json.Unmarshal(body, res); err != nil {
+		log.WithField("url", resp.Request.URL).WithField("body", string(body)).Error("Bad json body")
 		return fmt.Errorf("json unmarshaling http response body: %w", err)
 	}
 	return nil
 }
 
 type ReqMapsHerePlace struct {
-	PlaceId string `url:"placeId"`
+	PlaceID string `url:"placeId"`
 }
 
 type ResMapsHerePlace struct {
@@ -182,15 +191,15 @@ type ResMapsHerePlace struct {
 }
 
 type ReqSearch struct {
-	Distance      string `url:"distance"`
-	Keywords      string `url:"keywords"`
-	FiltersSource string `url:"filters_source"`
-	OrderBy       string `url:"order_by"`
-	MinSalePrice  int    `url:"min_sale_price"`
-	MaxSalePrice  int    `url:"max_sale_price"`
-	Latitude      string `url:"latitude"`
-	Longitude     string `url:"longitude"`
-	Language      string `url:"language"`
+	Distance      float32 `url:"distance"`
+	Keywords      string  `url:"keywords"`
+	FiltersSource string  `url:"filters_source"`
+	OrderBy       string  `url:"order_by"`
+	MinSalePrice  int     `url:"min_sale_price"`
+	MaxSalePrice  int     `url:"max_sale_price"`
+	Latitude      float32 `url:"latitude"`
+	Longitude     float32 `url:"longitude"`
+	Language      string  `url:"language"`
 }
 
 type User struct {
@@ -216,7 +225,7 @@ type SearchObject struct {
 	ID          string  `json:"id"`
 	Title       string  `json:"title"`
 	Description string  `json:"description"`
-	Distance    int     `json:"distance"`
+	Distance    float32 `json:"distance"`
 	Images      []Image `json:"images"`
 	User        User    `json:"user"`
 	Flags       Flags   `json:"flags"`
@@ -233,6 +242,7 @@ type ItemImage struct {
 	ID         string `json:"id"`
 	URLsBySize struct {
 		Original string `json:"original"`
+		Medium   string `json:"medium"`
 	} `json:"urls_by_size"`
 }
 
@@ -244,43 +254,297 @@ type ResItem struct {
 	} `json:"content"`
 }
 
-func main() {
-	log.SetLevel(log.DebugLevel)
-	q, err := NewQueries(DEFAULT_QUERIES_PATH)
-	if err != nil {
-		panic(err)
+func getLocation(place string) (*ResMapsHerePlace, error) {
+	var res ResMapsHerePlace
+	if err := get(fmt.Sprintf("%v/maps/here/place", URL), ReqMapsHerePlace{place}, &res); err != nil {
+		return nil, err
 	}
-	fmt.Printf("%+v\n", q.Get())
+	return &res, nil
+}
 
-	// var res ResMapsHerePlace
-	// if err := get(fmt.Sprintf("%v/maps/here/place", URL), ReqMapsHerePlace{"Barcelona"}, &res); err != nil {
-	// 	panic(err)
-	// }
-	// fmt.Printf("%+v\n", res)
+func search(req *ReqSearch) (*ResSearch, error) {
+	var res ResSearch
+	if err := get(fmt.Sprintf("%v/general/search", URLAPIV3),
+		*req,
+		// ReqSearch{
+		// 	Distance:      5000,
+		// 	Keywords:      "kindle",
+		// 	FiltersSource: "quick_filters",
+		// 	OrderBy:       "newest",
+		// 	MinSalePrice:  0,
+		// 	MaxSalePrice:  999,
+		// 	Latitude:      41.38804,
+		// 	Longitude:     2.17001,
+		// 	Language:      "es_ES",
+		// },
+		&res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
 
-	// var res ResSearch
-	// if err := get(fmt.Sprintf("%v/general/search", URLAPIV3),
-	// 	ReqSearch{
-	// 		Distance:      "5000",
-	// 		Keywords:      "kindle",
-	// 		FiltersSource: "quick_filters",
-	// 		OrderBy:       "newest",
-	// 		MinSalePrice:  0,
-	// 		MaxSalePrice:  999,
-	// 		Latitude:      "41.38804",
-	// 		Longitude:     "2.17001",
-	// 		Language:      "es_ES",
-	// 	},
-	// 	&res); err != nil {
-	// 	panic(err)
-	// }
-	// fmt.Printf("%+v\n", res.SearchObjects[0])
-
-	itemID := "v6g45xw4r56e"
+func getItem(itemID string) (*ResItem, error) {
 	var res ResItem
 	if err := get(fmt.Sprintf("%v/items/%v", URLAPIV3, itemID),
 		struct{}{}, &res); err != nil {
+		return nil, err
+	}
+	return &res, nil
+}
+
+type FileWatch struct {
+	Changed bool
+	Error   error
+}
+
+// watchFile spawns a goroutine that watches the file in filePath and notifies
+// about changes via the returned channel.
+func watchFile(filePath string) (chan FileWatch, error) {
+	saveStat, err := os.Stat(filePath)
+	if err != nil {
+		return nil, err
+	}
+	notifications := make(chan FileWatch)
+	go func() {
+		for {
+			stat, err := os.Stat(filePath)
+			if err != nil {
+				notifications <- FileWatch{Changed: false, Error: err}
+				continue
+			}
+
+			if stat.Size() != saveStat.Size() || stat.ModTime() != saveStat.ModTime() {
+				saveStat = stat
+				notifications <- FileWatch{Changed: true, Error: nil}
+				continue
+			}
+
+			time.Sleep(4 * time.Second)
+		}
+	}()
+	return notifications, nil
+}
+
+type FeedsConfig struct {
+	CacheTimeout     time.Duration
+	UpdateQueryDelay time.Duration
+}
+
+type Feeds struct {
+	queries   *Queries
+	itemCache *Cache
+	feeds     map[string]*feeds.Feed
+	cfg       FeedsConfig
+	m         sync.RWMutex
+}
+
+func NewFeeds(queries *Queries, cfg FeedsConfig) *Feeds {
+	return &Feeds{
+		queries: queries,
+		itemCache: NewCache(
+			func(key string) (interface{}, error) { return getItem(key) },
+			cfg.CacheTimeout),
+		feeds: make(map[string]*feeds.Feed),
+		cfg:   cfg,
+	}
+}
+
+var (
+	ErrFeedNotFound = errors.New("feed not found")
+)
+
+func (f *Feeds) Get(name string) (*feeds.Feed, error) {
+	f.m.RLock()
+	defer f.m.RUnlock()
+	feed, ok := f.feeds[name]
+	if !ok {
+		return nil, ErrFeedNotFound
+	}
+	return feed, nil
+}
+
+func (f *Feeds) Update() {
+	queries := f.queries.Get()
+	type NameAndFeed struct {
+		Name string
+		Feed *feeds.Feed
+	}
+	ch := make(chan NameAndFeed)
+	for name, query := range queries {
+		go func(name string, query Query) {
+			feed, err := f.genFeed(&query)
+			if err != nil {
+				log.WithError(err).WithField("name", name).Error("Unable to generate feed")
+				ch <- NameAndFeed{Feed: nil, Name: name}
+				return
+			}
+			ch <- NameAndFeed{Feed: feed, Name: name}
+		}(name, query)
+		time.Sleep(f.cfg.UpdateQueryDelay)
+	}
+	for i := 0; i < len(queries); i++ {
+		select {
+		case NameAndFeed := <-ch:
+			if NameAndFeed.Feed == nil {
+				continue
+			}
+			f.m.Lock()
+			f.feeds[NameAndFeed.Name] = NameAndFeed.Feed
+			f.m.Unlock()
+		}
+
+	}
+}
+
+func (f *Feeds) genFeed(query *Query) (*feeds.Feed, error) {
+	now := time.Now()
+	feed := feeds.Feed{
+		Title:       fmt.Sprintf("%v - Wallapop RSS v2", query.Keywords),
+		Link:        &feeds.Link{Href: "http://es.wallapop.com"},
+		Description: "Wallapop RSS feed.",
+		Author:      &feeds.Author{Name: "Dhole", Email: "dhole@riseup.net"},
+		Created:     now,
+		Items:       make([]*feeds.Item, 0),
+	}
+	location, err := getLocation(query.LocationName)
+	if err != nil {
+		return nil, err
+	}
+	itemIDs := make(map[string]bool)
+	for _, keyword := range query.Keywords {
+		result, err := search(
+			&ReqSearch{
+				Distance:      float32(query.LocationRadius * 1000),
+				Keywords:      keyword,
+				FiltersSource: "quick_filters",
+				OrderBy:       "newest",
+				MinSalePrice:  query.MinPrice,
+				MaxSalePrice:  query.MaxPrice,
+				Latitude:      location.Latitude,
+				Longitude:     location.Longitude,
+				Language:      "es_ES",
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+		items := result.SearchObjects
+		for _, item := range items {
+			if _, ok := itemIDs[item.ID]; ok {
+				continue
+			}
+			ignoreItem := false
+			for _, ignore := range query.Ignores {
+				if strings.Contains(item.Description, ignore) {
+					ignoreItem = true
+					break
+				}
+			}
+			if ignoreItem {
+				continue
+			}
+			itemDataEntry, err := f.itemCache.Get(item.ID)
+			if err != nil {
+				return nil, err
+			}
+			itemData := itemDataEntry.(*ResItem)
+			description := item.Description + "<br/>"
+			for _, image := range itemData.Content.Images {
+				description += fmt.Sprintf(`<img src="%v"><br/>`, image.URLsBySize.Medium)
+			}
+			feed.Items = append(feed.Items, &feeds.Item{
+				Id:          item.ID,
+				Title:       fmt.Sprintf("%v - %v %v", item.Title, item.Price, item.Currency),
+				Link:        &feeds.Link{Href: fmt.Sprintf("%v/item/%v", URL, item.WebSlug)},
+				Description: description,
+				Author:      &feeds.Author{Name: item.User.MicroName},
+				Created:     time.Unix(itemData.Content.ModifiedDate, 0),
+			})
+		}
+	}
+	return &feed, nil
+}
+
+func main() {
+	addr := flag.String("addr", "127.0.0.1:8080", "http listening address")
+	debug := flag.Bool("debug", false, "enable debug logs")
+	queriesPath := flag.String("queries", "./queries.toml", "queries file path")
+	cacheTimeoutHours := flag.Int64("cacheTimeout", 12, "timeout for the item cache (hours)")
+	updateQueryDelaySeconds := flag.Int64("updateDelay", 1, "delay between concurrent query updates (seconds)")
+	updateIntervalMinutes := flag.Int64("updateInterval", 15, "interval between query updates (minutes)")
+	flag.Parse()
+
+	cacheTimeout := time.Duration(*cacheTimeoutHours) * time.Hour
+	updateQueryDelay := time.Duration(*updateQueryDelaySeconds) * time.Second
+	updateInterval := time.Duration(*updateIntervalMinutes) * time.Minute
+
+	if *debug {
+		log.SetLevel(log.DebugLevel)
+	}
+
+	log.Info("Loading queries file for the first time...")
+	queries, err := NewQueries(*queriesPath)
+	if err != nil {
 		panic(err)
 	}
-	fmt.Printf("%+v\n", res)
+	queriesUpdate, err := watchFile(*queriesPath)
+	if err != nil {
+		panic(err)
+	}
+
+	go func() {
+		for {
+			update := <-queriesUpdate
+			if update.Error != nil {
+				log.WithField("file", queriesPath).WithError(update.Error).
+					Error("Failed watching queries file")
+				continue
+			}
+			if err := queries.Load(); err != nil {
+				log.WithField("file", queriesPath).WithError(err).
+					Error("Failed parsing queries file")
+				continue
+			}
+			log.WithField("file", queriesPath).
+				Info("updated queries feeds")
+		}
+	}()
+
+	myFeeds := NewFeeds(queries, FeedsConfig{
+		CacheTimeout:     cacheTimeout,
+		UpdateQueryDelay: updateQueryDelay,
+	})
+	log.Info("Updating queries feeds for the first time...")
+	myFeeds.Update()
+
+	go func() {
+		for {
+			time.Sleep(updateInterval)
+			myFeeds.Update()
+		}
+	}()
+
+	r := gin.Default()
+	r.GET("/rss/:name", func(c *gin.Context) {
+		name := c.Param("name")
+		feed, err := myFeeds.Get(name)
+		if err != nil {
+			log.WithError(err).WithField("name", name).Error("Unable to get feed")
+			c.JSON(404, gin.H{
+				"error": err,
+			})
+			return
+		}
+		rss, err := feed.ToRss()
+		if err != nil {
+			log.WithError(err).WithField("name", name).Error("Unable build rss feed")
+			c.JSON(404, gin.H{
+				"error": err,
+			})
+			return
+		}
+		c.Data(200, "application/xml", []byte(rss))
+	})
+	log.WithField("addr", *addr).Info("Serving http")
+	r.Run(*addr)
 }
