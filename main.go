@@ -68,6 +68,58 @@ func NewQueries(path string) (*Queries, error) {
 	return &q, nil
 }
 
+type CacheEntry struct {
+	Timestamp time.Time
+	Value     interface{}
+}
+
+type Cache struct {
+	expiration time.Duration
+	entries    map[string]CacheEntry
+	fetchFn    func(key string) (interface{}, error)
+	m          sync.RWMutex
+}
+
+func NewCache(fetchFn func(key string) (interface{}, error), expiration time.Duration) *Cache {
+	return &Cache{
+		expiration: expiration,
+		entries:    make(map[string]CacheEntry),
+		fetchFn:    fetchFn,
+	}
+}
+
+func (c *Cache) Get(key string) (interface{}, error) {
+	c.Clean()
+	c.m.RLock()
+	entry, ok := c.entries[key]
+	c.m.RUnlock()
+	if ok {
+		return entry.Value, nil
+	}
+	value, err := c.fetchFn(key)
+	if err != nil {
+		return nil, err
+	}
+	c.m.Lock()
+	c.entries[key] = CacheEntry{
+		Timestamp: time.Now(),
+		Value:     value,
+	}
+	c.m.Unlock()
+	return value, nil
+}
+
+func (c *Cache) Clean() {
+	c.m.Lock()
+	defer c.m.Unlock()
+	maxTimestamp := time.Now().Add(-c.expiration)
+	for key, entry := range c.entries {
+		if entry.Timestamp.Before(maxTimestamp) {
+			delete(c.entries, key)
+		}
+	}
+}
+
 var KEY = []byte("Tm93IHRoYXQgeW91J3ZlIGZvdW5kIHRoaXMsIGFyZSB5b3UgcmVhZHkgdG8gam9pbiB1cz8gam9ic0B3YWxsYXBvcC5jb20==")
 
 func sign(url, method, timestamp string) string {
@@ -111,7 +163,9 @@ func get(url string, params interface{}, res interface{}) error {
 		return fmt.Errorf("http status code is %v", resp.StatusCode)
 	}
 	log.Debug(resp.Request.URL)
-	log.Debug(string(body))
+	fmt.Println("###")
+	fmt.Print(string(body))
+	fmt.Println("###")
 	if err := json.Unmarshal(body, res); err != nil {
 		return fmt.Errorf("json unmarshaling http response body: %w", err)
 	}
@@ -140,21 +194,54 @@ type ReqSearch struct {
 }
 
 type User struct {
+	ID        string `json:"id"`
 	MicroName string `json:"micro_name"`
+	Image     Image  `json:"images"`
+}
+
+type Image struct {
+	Original string `json:"original"`
+}
+
+type Flags struct {
+	Pending  bool `json:"pending"`
+	Sold     bool `json:"sold"`
+	Reserved bool `json:"reserved"`
+	Banned   bool `json:"banned"`
+	Expired  bool `json:"expired"`
+	OnHold   bool `json:"onhold"`
 }
 
 type SearchObject struct {
 	ID          string  `json:"id"`
-	Description string  `json:"description"`
 	Title       string  `json:"title"`
+	Description string  `json:"description"`
+	Distance    int     `json:"distance"`
+	Images      []Image `json:"images"`
+	User        User    `json:"user"`
+	Flags       Flags   `json:"flags"`
 	Price       float32 `json:"price"`
 	Currency    string  `json:"currency"`
 	WebSlug     string  `json:"web_slug"`
-	User        User    `json:"user"`
 }
 
 type ResSearch struct {
 	SearchObjects []SearchObject `json:"search_objects"`
+}
+
+type ItemImage struct {
+	ID         string `json:"id"`
+	URLsBySize struct {
+		Original string `json:"original"`
+	} `json:"urls_by_size"`
+}
+
+type ResItem struct {
+	ID      string `json:"id"`
+	Content struct {
+		ModifiedDate int64       `json:"modified_date"`
+		Images       []ItemImage `json:"images"`
+	} `json:"content"`
 }
 
 func main() {
@@ -171,20 +258,28 @@ func main() {
 	// }
 	// fmt.Printf("%+v\n", res)
 
-	var res ResSearch
-	if err := get(fmt.Sprintf("%v/general/search", URLAPIV3),
-		ReqSearch{
-			Distance:      "5000",
-			Keywords:      "kindle",
-			FiltersSource: "quick_filters",
-			OrderBy:       "newest",
-			MinSalePrice:  0,
-			MaxSalePrice:  999,
-			Latitude:      "41.38804",
-			Longitude:     "2.17001",
-			Language:      "es_ES",
-		},
-		&res); err != nil {
+	// var res ResSearch
+	// if err := get(fmt.Sprintf("%v/general/search", URLAPIV3),
+	// 	ReqSearch{
+	// 		Distance:      "5000",
+	// 		Keywords:      "kindle",
+	// 		FiltersSource: "quick_filters",
+	// 		OrderBy:       "newest",
+	// 		MinSalePrice:  0,
+	// 		MaxSalePrice:  999,
+	// 		Latitude:      "41.38804",
+	// 		Longitude:     "2.17001",
+	// 		Language:      "es_ES",
+	// 	},
+	// 	&res); err != nil {
+	// 	panic(err)
+	// }
+	// fmt.Printf("%+v\n", res.SearchObjects[0])
+
+	itemID := "v6g45xw4r56e"
+	var res ResItem
+	if err := get(fmt.Sprintf("%v/items/%v", URLAPIV3, itemID),
+		struct{}{}, &res); err != nil {
 		panic(err)
 	}
 	fmt.Printf("%+v\n", res)

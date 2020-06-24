@@ -13,8 +13,8 @@ def get_timestamp():
 def get_signature(url, method, timestamp):
     req = url.replace('https://api.wallapop.com', '')
     msg = f'{method.upper()}|{req}|{timestamp}|'
-    # print('Msg:', msg)
     sig = hmac.new(KEY.encode('utf-8'), msg.encode('utf-8'), hashlib.sha256).digest()
+    # print('sig:', sig.hex())
     return base64.b64encode(sig).decode('ascii')
 
 def test():
