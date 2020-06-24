@@ -60,6 +60,11 @@ func (q *Queries) Load() error {
 	if _, err := toml.DecodeFile(q.path, &queries); err != nil {
 		return err
 	}
+	for name, _ := range queries {
+		for i, ignore := range queries[name].Ignores {
+			queries[name].Ignores[i] = strings.ToLower(ignore)
+		}
+	}
 	q.set(queries)
 	return nil
 }
@@ -458,7 +463,7 @@ func (f *Feeds) genFeed(query *Query) (*feeds.Feed, error) {
 				Link:        &feeds.Link{Href: fmt.Sprintf("%v/item/%v", URL, item.WebSlug)},
 				Description: description,
 				Author:      &feeds.Author{Name: item.User.MicroName},
-				Created:     time.Unix(itemData.Content.ModifiedDate, 0),
+				Created:     time.Unix(itemData.Content.ModifiedDate/1000, 0),
 			})
 		}
 	}
