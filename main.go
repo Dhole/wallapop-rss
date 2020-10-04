@@ -163,16 +163,16 @@ func get(url string, params interface{}, res interface{}) error {
 	req.Header.Set("X-Signature", signature)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.WithField("url", resp.Request.URL).Error("Failed http request")
+		log.WithField("url", url).Error("Failed http request")
 		return fmt.Errorf("doing http request: %w", err)
 	}
 	body, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("reading http response body: %w", err)
 	}
-	log.WithField("url", resp.Request.URL).Debug("HTTP GET")
+	log.WithField("url", url).Debug("HTTP GET")
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		log.WithField("url", resp.Request.URL).WithField("body", string(body)).Error("Bad http request")
+		log.WithField("url", url).WithField("body", string(body)).Error("Bad http request")
 		return fmt.Errorf("http status code is %v", resp.StatusCode)
 	}
 	// log.Debug(resp.Request.URL)
@@ -180,7 +180,7 @@ func get(url string, params interface{}, res interface{}) error {
 	// fmt.Print(string(body))
 	// fmt.Println("\n###")
 	if err := json.Unmarshal(body, res); err != nil {
-		log.WithField("url", resp.Request.URL).WithField("body", string(body)).Error("Bad json body")
+		log.WithField("url", url).WithField("body", string(body)).Error("Bad json body")
 		return fmt.Errorf("json unmarshaling http response body: %w", err)
 	}
 	return nil
