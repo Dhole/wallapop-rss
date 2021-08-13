@@ -43,6 +43,31 @@ location_radius = 5 # Radius in Km from the location
 min_price = 0 # Minimum price in EUR
 max_price = 200 # Maximum price in EUR
 ```
+
+# Docker
+
+Build docker image
+```sh
+docker build -t wallapop-rss . -f Dockerfile
+```
+
+Create a local user for the container
+
+```sh
+addgroup -S wallapop-rss
+adduser -S -D -H -G wallapop-rss wallapop-rss
+```
+
+Run the container with the created user.  The example `docker-compose.yml`
+provided expects the configuration to be in `data/queries.toml`.  Modify it as
+you see fit.
+```sh
+name="wallapop-rss"
+export SVC_USER="$(id -u ${name})"
+export SVC_GROUP="$(id -g ${name})"
+docker-compose --file docker-compose.yml up -d
+```
+
 # License
 
 The code is released under the 3-clause BSD License.

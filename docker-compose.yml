@@ -1,0 +1,14 @@
+version: "3"
+
+services:
+  wallapop-rss:
+    image: wallapop-rss
+    build:
+      context: src/wallapop-rss
+    ports:
+      - 127.0.0.1:8002:8080
+    volumes:
+      - /data/srv/wallapop-rss/data:/app/data:ro
+    # user: nobody:nogroup
+    user: "${SVC_USER}:${SVC_GROUP}"
+    command: ./wallapop-rss -addr 0.0.0.0:8080 -queries data/queries.toml
