@@ -172,6 +172,7 @@ func GetParamsString(url string, params string, res interface{}) (*http.Response
 			Error("Bad http request")
 		return nil, fmt.Errorf("http status code is %v", resp.StatusCode)
 	}
+	// fmt.Printf("DBG Req: %+v\n", req)
 	// log.Debug(resp.Request.URL)
 	// fmt.Println("###")
 	// fmt.Print(string(body))
@@ -281,19 +282,15 @@ type ResSearch struct {
 }
 
 type ItemImage struct {
-	ID         string `json:"id"`
-	URLsBySize struct {
-		Original string `json:"original"`
-		Medium   string `json:"medium"`
-	} `json:"urls_by_size"`
+	URLs struct {
+		Big string `json:"big"`
+	} `json:"urls"`
 }
 
 type ResItem struct {
-	ID      string `json:"id"`
-	Content struct {
-		ModifiedDate int64       `json:"modified_date"`
-		Images       []ItemImage `json:"images"`
-	} `json:"content"`
+	ID           string      `json:"id"`
+	ModifiedDate int64       `json:"modified_date"`
+	Images       []ItemImage `json:"images"`
 }
 
 func GetLocation(place string) (*ResMapsHerePlace, error) {
@@ -359,6 +356,7 @@ func GetItem(itemID string) (*ResItem, error) {
 		struct{}{}, &res); err != nil {
 		return nil, err
 	}
+	// fmt.Printf("DBG %+v\n", res)
 	return &res, nil
 }
 
@@ -441,6 +439,7 @@ func (f *Feeds) genFeed(query *Query) (*feeds.Feed, error) {
 		Description: "Wallapop RSS feed.",
 		Author:      &feeds.Author{Name: "Dhole", Email: "dhole@riseup.net"},
 		Created:     now,
+		Updated:     now,
 		Items:       make([]*feeds.Item, 0),
 	}
 	location, err := GetLocation(query.LocationName)
@@ -487,16 +486,19 @@ func (f *Feeds) genFeed(query *Query) (*feeds.Feed, error) {
 			}
 			itemData := itemDataEntry.(*ResItem)
 			description := item.Description + "<br/>"
-			for _, image := range itemData.Content.Images {
-				description += fmt.Sprintf(`<img src="%v"><br/>`, image.URLsBySize.Medium)
+			for _, image := range itemData.Images {
+				src := fmt.Sprintf("%v1024", strings.TrimSuffix(image.URLs.Big, "800"))
+				description += fmt.Sprintf(`<img src="%v"><br/>`, src)
 			}
+			date := time.Unix(itemData.ModifiedDate, 0)
 			feed.Items = append(feed.Items, &feeds.Item{
 				Id:          item.ID,
 				Title:       fmt.Sprintf("%v - %v %v", item.Title, item.Price, item.Currency),
 				Link:        &feeds.Link{Href: fmt.Sprintf("%v/item/%v", URL, item.WebSlug)},
 				Description: description,
 				Author:      &feeds.Author{Name: item.User.MicroName},
-				Created:     time.Unix(itemData.Content.ModifiedDate/1000, 0),
+				Created:     date,
+				Updated:     date,
 			})
 		}
 	}
